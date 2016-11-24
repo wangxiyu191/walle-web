@@ -31,8 +31,15 @@ class ConfController extends Controller
      *
      */
     public function actionIndex() {
+
+        // 为了方便用户更改表名，避免表名直接定死
+        $groupTable   = Group::tableName();
+        $projectTable = Project::tableName();
+        // 显示该用户为管理员的所有项目
         $project = Project::find()
-            ->where(['user_id' => $this->uid]);
+            ->leftJoin(Group::tableName(), "`$groupTable`.`project_id`=`$projectTable`.`id`")
+            ->where(["`$groupTable`.`user_id`" => $this->uid, "`$groupTable`.`type`" => Group::TYPE_ADMIN]); 
+
         $kw = \Yii::$app->request->post('kw');
         if ($kw) {
             $project->andWhere(['like', "name", $kw]);
@@ -126,12 +133,6 @@ class ConfController extends Controller
         if (\Yii::$app->request->getIsPost() && $project->load(Yii::$app->request->post())) {
             $project->user_id = $this->uid;
 
-            // TODO 似乎Yii应该可以在Model配置 这些字段的属性 rtrim
-            $project->repo_url = rtrim($project->repo_url, '/');
-            $project->deploy_from = rtrim($project->deploy_from, '/');
-            $project->release_to = rtrim($project->release_to, '/');
-            $project->release_library = rtrim($project->release_library, '/');
-
             if ($project->save()) {
                 // 保存ansible需要的hosts文件
                 $this->_saveAnsibleHosts($project);
@@ -197,10 +198,7 @@ class ConfController extends Controller
         if (!$group) {
             throw new \Exception(yii::t('conf', 'relation not exists'));
         }
-        $project = Project::findOne($group->project_id);
-        if ($project->user_id != $this->uid) {
-            throw new \Exception(yii::t('conf', 'you are not master of project'));
-        }
+        $project = $this->findModel($group->project_id);
 
         if (!$group->delete()) throw new \Exception(yii::t('w', 'delete failed'));
         $this->renderJson([]);
@@ -217,10 +215,7 @@ class ConfController extends Controller
         if (!$group) {
             throw new \Exception(yii::t('conf', 'relation not exists'));
         }
-        $project = Project::findOne($group->project_id);
-        if ($project->user_id != $this->uid) {
-            throw new \Exception(yii::t('w', 'you are not master of project'));
-        }
+        $project = $this->findModel($group->project_id);
         if (!in_array($type, [Group::TYPE_ADMIN, Group::TYPE_USER])) {
             throw new \Exception(yii::t('conf', 'unknown relation type'));
         }
@@ -238,8 +233,9 @@ class ConfController extends Controller
      */
     protected function findModel($id) {
         if (($model = Project::getConf($id)) !== null) {
-            if ($model->user_id != $this->uid) {
-                throw new \Exception(yii::t('w', 'you are not master of project'));
+            //判断是否为管理员
+            if(!Group::isAuditAdmin($this->uid, $model->id)){
+                throw new \Exception(yii::t('w', 'you are not admin of project'));
             }
             return $model;
         } else {
